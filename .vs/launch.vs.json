@@ -1,0 +1,12 @@
+{
+  "version": "0.2.1",
+  "defaults": {},
+  "configurations": [
+    {
+      "type": "default",
+      "project": "CMakeLists.txt",
+      "projectTarget": "cotahist_parser.exe (cotahist_parser\\cotahist_parser.exe)",
+      "name": "cotahist_parser.exe (cotahist_parser\\cotahist_parser.exe)"
+    }
+  ]
+}
