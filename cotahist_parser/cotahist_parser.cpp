@@ -245,7 +245,8 @@ int main(int argc, char* argv[])
         cout << " Total Registers: " << registersCount << endl;
 
 
-        fileHandler.seekg(LINE_SIZE, ios_base::beg);
+        // Move pointer to start
+        fileHandler.seekg(0, ios_base::beg);
 
 
         registersCount = registersCount - 2; // discount header and trailer
@@ -291,6 +292,8 @@ int main(int argc, char* argv[])
         if (rerturCodeBeginTransaction != SQLITE_OK) {
             cout << " Error to start transaction. " << sqlite3_errmsg(database) << endl;
         }
+        // get and ignore first line (header)
+        getline(fileHandler, header);
 
         for (int i = 0; i < registersCount; i++) {
            
@@ -383,7 +386,7 @@ int main(int argc, char* argv[])
          return -1;
     }
 
-     cout <<  endl << " Importint process finished " <<  endl;
+     cout <<  endl << " Import process finished " <<  endl;
 
     return 0;
 
