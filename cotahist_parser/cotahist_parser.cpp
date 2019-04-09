@@ -2,9 +2,18 @@
 //
 
 #include "cotahist_parser.h"
-
 using namespace std;
 
+
+#ifdef __unix__
+ #define LINE_SIZE 246
+#elif _WIN32 || _WIN64 
+ #define LINE_SIZE 247
+#endif
+
+
+string inputFileName;
+string databaseFileName;
 
 struct STOCK_DATA {
     string data_pregao; // 03-10 (08)
@@ -63,7 +72,7 @@ int parseData(string *line, STOCK_DATA * data)
     data->total_negocios = stoi(rawNumber);
 
     rawNumber = line->substr(152, 18);
-    data->qtd_titulos_negociados = stoi(rawNumber);
+    data->qtd_titulos_negociados = stod(rawNumber);
 
     rawNumber = line->substr(170, 18);
     data->volume_financeiro_negociado = stod(rawNumber.insert(rawNumber.length() - 2, "."));
@@ -111,45 +120,95 @@ int createTables(sqlite3 *database) {
 
     return SQLITE_OK;
 }
+void printUsage() {
+    cout << " Usage: cotahist_parser -f <InputFileName> -d <DatabaseFileName> " << endl;
+    cout << endl;
+    cout << " -f full path to input file " << endl;
+    cout << " -d full path to database file. If file does not exist it will be created. " << endl;
+    cout << endl;
+}
+// CHECK PARAMETERS
+// -d databasename
+// -f inputfilename
+bool checkUsage(int argc, char* argv[]) {
+    int error = 0;
+    if (argc < 5)
+    {
+        printUsage();
+        return false;
+    }
 
+    string argvline = *argv;
+    size_t dPos = argvline.find("-d");
+    size_t fPos = argvline.find("-f");
 
-int main()
+    if (dPos < 0 || fPos < 0) {
+        printUsage();
+        return false;
+    }
+
+    for (int i = 1; i < argc; i++)
+    {
+        if (string(argv[i]) == "-f") {
+            inputFileName = argv[++i];
+        }
+        if (string(argv[i]) == "-d") {
+            databaseFileName = argv[++i];
+        }
+    }
+
+    bool paramError = false;
+    if (inputFileName.empty()) {
+        printUsage();
+        cout << endl << " --> InputFile name is empty. Provide a valid input file name." << endl;
+        paramError = true;
+    }
+    if (databaseFileName.empty()) {
+        printUsage();
+        cout << endl << " --> Database file name is empty. Provide a valid database file name." << endl;
+        paramError = true;
+    }
+    return !paramError;
+    
+}
+
+int main(int argc, char* argv[])
 {
+    if (!checkUsage(argc, argv)) {
+        exit(-1);
+    }
 
-    cout << " CHECKING DATABASE " << endl << endl;
-    sqlite3_initialize();
+    cout << " Input file:    [" << inputFileName << "]" << endl;
+    cout << " Database file: [" << databaseFileName << "]" << endl;
+
+    cout << " Checking Database" << endl << endl;
     sqlite3 *database;
-
-    int errorCode = sqlite3_open_v2("./marketdata.db", &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
+    int errorCode = sqlite3_open_v2( databaseFileName.c_str(), &database, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
 
     if (errorCode)
     {
-        cout << "Cant open database! Exiting" << endl;
+        cout << " Cant open database! Exiting. Error: " << sqlite3_errmsg(database) << endl;
         exit(-1);
     }
-
-
+    
     int databaseStatus = createTables(database);
     if (databaseStatus != SQLITE_OK)
     {
-        cout << " Cant open table MARKET_DATA! Exiting" << endl;
+        cout << " Cant open table MKT_COTACAO! Exiting. Error: " << sqlite3_errmsg(database) << endl;
         exit(-1);
     }
 
-    cout << " DATABASE ok!" << endl << endl;
+    cout << " Database ok!" << endl << endl;
 
+    cout << " Parsing input file " << inputFileName << endl;
 
-
-    cout << " PARSING COTAHIST FILES " <<  endl <<  endl;
-
-    string filename;
-
-    filename = "E:/Projetos/marketdata_parser/cotahist_parser/cotahist_parser/data/COTAHIST_M022019.TXT";
+    //string filename;
+    //filename = "E:/Projetos/marketdata_parser/cotahist_parser/cotahist_parser/data/COTAHIST_A2018.TXT";
 
     string line;
 
     ifstream fileHandler;
-    fileHandler.open(filename);
+    fileHandler.open(inputFileName, ifstream::binary);
     
 
     int numLines = 0;
@@ -160,14 +219,17 @@ int main()
         getline(fileHandler, header);
 
         string dataArquivo = header.substr(23, 8);
-        cout << " DataArquivo: " << dataArquivo <<  endl;
+        cout << " Data date: " << dataArquivo <<  endl;
 
 
         // parse the trail
+        // TODO: Check a way to make it cross platform. In windows we use
+        // 245 position of data on each line + 2 for endln characters (\r\n)
+        // on unix we use 245 data positions + 1 for endl (\n)
         string trail;
-        fileHandler.seekg(-247, ios_base::end);
+        fileHandler.seekg(-LINE_SIZE, ios_base::end);
         getline(fileHandler, trail);
-
+        
         string registers;
         int registersCount = 0;
 
@@ -175,16 +237,15 @@ int main()
 
         try {
             registersCount = stoi(registers);
-
         }
         catch (const invalid_argument& ia) {
-            cerr << "Invalid register amount found in trail. Trail data:[ " << registers << " ]. " << ia.what() << endl;
+            cerr << " Invalid register amount found in trail. Trail data:[ " << registers << " ]. " << ia.what() << endl;
             exit(-1);
         }
         cout << " Total Registers: " << registersCount << endl;
 
 
-        fileHandler.seekg(247, ios_base::beg);
+        fileHandler.seekg(LINE_SIZE, ios_base::beg);
 
 
         registersCount = registersCount - 2; // discount header and trailer
@@ -203,27 +264,20 @@ int main()
             " TOTAL_NEGOCIOS, "
             " QTD_TITULOS_NEGOCIADOS, "
             " VOLUME_FINANCEIRO_NEGOCIADO, "
-            " FATOR_COTACAO ) VALUES ( ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13 );";
-            
-
-           // string insertQuery = " INSERT INTO MKT_COTACAO ( ISINCODE, CODIGO_NEGOCIACAO, DATA_PREGAO  ) VALUES ( 'teste', 'teste1', '2019-01-01' );";
-
+            " FATOR_COTACAO ) VALUES ( ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13 ) ON CONFLICT DO NOTHING;";
+        
             int completeCode = sqlite3_complete(insertQuery.c_str());
 
-            if (completeCode != 1) {
-
-                cout << "Incomplete. Error Code " << completeCode << "ErrorMessage: " << sqlite3_errmsg(database) << endl;
-
-            }
+        if (completeCode != 1) {
+            cout << " Incomplete. Error Code " << completeCode << "ErrorMessage: " << sqlite3_errmsg(database) << endl;
+        }
 
         sqlite3_stmt *insertStmt;
         int prepareResult = sqlite3_prepare_v2(database, insertQuery.c_str(), -1, &insertStmt, 0);
 
         if (prepareResult != SQLITE_OK) {
-            cout << "Error to prepare statement: " << prepareResult << " Mesage: " << sqlite3_errmsg(database) << endl;
+            cout << " Error to prepare statement: " << prepareResult << " Mesage: " << sqlite3_errmsg(database) << endl;
         }
-
-        
 
         int rowsInserted = 0;
         int rowswithError = 0;
@@ -235,7 +289,7 @@ int main()
         int rerturCodeBeginTransaction = sqlite3_exec(database, "BEGIN TRANSACTION;", NULL, NULL, &error_begin_transaction);
         
         if (rerturCodeBeginTransaction != SQLITE_OK) {
-            cout << "Error to start transaction. " << sqlite3_errmsg(database) << endl;
+            cout << " Error to start transaction. " << sqlite3_errmsg(database) << endl;
         }
 
         for (int i = 0; i < registersCount; i++) {
@@ -271,45 +325,43 @@ int main()
 
                 if (insertResult == SQLITE_DONE) {
                     rowsInserted++;
-                    if (rowsInserted % 1000 == 0) {
-                        cout << rowsInserted << " linhas inseridas " << endl;
+                    if (rowsInserted % 10000 == 0) {
+                        cout << " " << rowsInserted << " inserted lines" << endl;
                     }
                 }
                 else { 
                     rowswithError++;
-                    cout << "Error to insert line " << i << sqlite3_errmsg(database) << endl;
+                    cout << " Error to insert line " << i << sqlite3_errmsg(database) << endl;
                 }
             }
             else {
                 rowsIgnored++;
             }
-        }
-        
+        }        
 
         char * error_end_transaction;
         int rerturCodeEndTransaction = sqlite3_exec(database, "END TRANSACTION;", NULL, NULL, &error_end_transaction);
 
         if (rerturCodeEndTransaction != SQLITE_OK) {
-            cout << "Error to end transaction. " << sqlite3_errmsg(database) << "Error: " << error_end_transaction << endl;
+            cout << " Error to end transaction. " << sqlite3_errmsg(database) << "Error: " << error_end_transaction << endl;
         }
 
         fileHandler.close();
-        cout << " Source file closed. " << endl;
+        cout << " Input file " << inputFileName << " closed. " << endl;
         // Finalize Insert STMT
         errorCode = sqlite3_finalize(insertStmt);
         
-      
 
         if (errorCode != SQLITE_OK)
         {
-            cout << "Cant close statement! Check for corrupted file!! Exiting" << endl;
+            cout << " Cant close statement! Check for corrupted file!! Exiting" << endl;
             exit(-1);
         }
 
         errorCode = sqlite3_close_v2(database);
         if (errorCode != SQLITE_OK)
         {
-            cout << "Cant close database! Check for corrupted file!! Exiting" << endl;
+            cout << " Cant close database! Check for corrupted file!! Exiting" << endl;
             exit(-1);
         }
         cout << " Database closed. " << endl;
@@ -318,21 +370,20 @@ int main()
         double elapsed_secs = double(end - begin) / CLOCKS_PER_SEC;
 
         cout << " IMPORT FINISHED IN  " << elapsed_secs << " seconds. "<< endl;
-        cout << " ------------------ SUMMARY ------------------ " << rowsInserted << endl;
+        cout << " ------------------ SUMMARY ------------------ " << endl;
         cout << " Inserted: " << rowsInserted << endl;
         cout << " Error(s): " << rowswithError << endl;
         cout << " Ignored: " << rowsIgnored << endl;
-        cout << " ------------------ SUMMARY ------------------ " << rowsInserted << endl;
+        cout << " ------------------ SUMMARY ------------------ " << endl;
 
     }
     else {
 
          cout << "Failed to open file" <<  endl;
-
+         return -1;
     }
 
-
-     cout <<  endl << " FINISHED PARSING COTAHIST FILES " <<  endl;
+     cout <<  endl << " Importint process finished " <<  endl;
 
     return 0;
 
